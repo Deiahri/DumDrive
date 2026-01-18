@@ -9,9 +9,14 @@ export interface GetDirResponse {
 export interface S3File {
   name: string,
   lastModified: string, // date string
-  size: number 
+  size: number,
+  isLoading?: boolean
 }
 
 export interface S3Folder {
-  name: string
+  name: string,
+  isLoading?: boolean
 };
+
+export const ForbiddenS3BucketPrefixes = ['s3test'] as const;
+export type ForbiddenS3BucketPrefix = (typeof ForbiddenS3BucketPrefixes[number]);

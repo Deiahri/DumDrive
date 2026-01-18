@@ -1,0 +1,1 @@
+export const GetDirFilesPerRequest = 100;

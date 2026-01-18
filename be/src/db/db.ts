@@ -19,7 +19,7 @@ type comparisonOperator =
   | "=="
   | "!="
   | "array-contains";
-type queryTuple = [
+export type queryTuple = [
   string,
   comparisonOperator,
   string | null | number | boolean
@@ -99,7 +99,7 @@ export async function DBGet(
 
     return results;
   } catch (e) {
-    console.log(e);
+    console.error('DBGet Error', e);
     return [];
   }
 }

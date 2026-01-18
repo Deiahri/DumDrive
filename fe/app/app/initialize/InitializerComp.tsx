@@ -19,7 +19,7 @@ export default function InitializerComp() {
     // return;
     const intitialize = async () => {
       try {
-        const res = await (await AuthedFetch(`${env_vars.BACKEND_URL}/initialize`, {
+        const res = await (await AuthedFetch(`${env_vars.BACKEND_URL}/Initialize`, {
           method: "POST",
           body: JSON.stringify({
             email: user.user?.emailAddresses[0].emailAddress
@@ -28,6 +28,7 @@ export default function InitializerComp() {
         
         if (res.error) {
           console.error(res.error);
+          router.replace('/');
         }
 
         router.replace('/app');

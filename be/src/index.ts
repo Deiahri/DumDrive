@@ -1,33 +1,43 @@
 import "./scripts/env_vars";
 import express from "express";
 import verifyUser, { GetSubIDFromHeaders } from "./middleware/VerifyUser";
-import { createBucket, createFolder, getBucketIDFromUserID, getDir } from "./s3/s3";
+import {
+  checkUserPermissions,
+  createBucket,
+  createFolder,
+  deleteDir,
+  deleteFile,
+  genSignedDownloadURL,
+  genSignedUploadURL,
+  getBucketIDFromUserID,
+  getDir,
+} from "./s3/s3";
 import cors from "cors";
 import { env_vars } from "./scripts/env_vars";
 import { DBCreate, DBDeleteWithID, DBGet } from "./db/db";
 import { UserObj } from "@shared/types/user/UserTypes";
-import { ConvertToBase32, sleep } from "./scripts/tools";
+import { sleep } from "./scripts/tools";
 
 const app = express();
 app.use(express.json());
 app.use(
   cors({
     origin: [env_vars.FE_ORIGIN],
-  })
+  }),
 );
 
-app.post('/Initialize', verifyUser, async (req, res) => {
+app.post("/Initialize", verifyUser, async (req, res) => {
   const { email } = req.body;
   if (!email) {
     res.status(400).send({
-      error: "Missing email address"
+      error: "Missing email address",
     });
     return;
   }
   const subID = GetSubIDFromHeaders(req);
 
   // verify user doesn't exist
-  const existingUser = await DBGet('user', [['subID', '==', subID]]);
+  const existingUser = await DBGet("user", [["subID", "==", subID]]);
   if (existingUser.length != 0) {
     res.status(200).send({});
     return;
@@ -37,18 +47,18 @@ app.post('/Initialize', verifyUser, async (req, res) => {
   const user: UserObj = {
     email,
     subID: subID,
-    username: email+'-user'
+    username: email + "-user",
   };
 
-  await DBCreate('user', user);
+  await DBCreate("user", user);
   await sleep(1000); // give network time to create user
   // there is a bug, where if two requests come in at the same time, a user is created twice.
-  
+
   // check how many users with this subID exist now
-  const existingUserPostCheck = await DBGet('user', [['subID', '==', subID]]);
-  let userID = '';
+  const existingUserPostCheck = await DBGet("user", [["subID", "==", subID]]);
+  let userID = "";
   if (existingUserPostCheck.length > 1) {
-    console.log('Duplicate users exist');
+    console.log("Duplicate users exist");
     // delete all users but the one with the highest ID.
     let highestID = existingUserPostCheck[0].id;
     for (let i = 1; i < existingUserPostCheck.length; i++) {
@@ -60,7 +70,7 @@ app.post('/Initialize', verifyUser, async (req, res) => {
     for (const user of existingUserPostCheck) {
       if (user.id == highestID) continue;
       try {
-        await DBDeleteWithID('user', user.id);
+        await DBDeleteWithID("user", user.id);
       } catch {
         // no problem if failed, likely other request deleted user first.
       }
@@ -75,13 +85,13 @@ app.post('/Initialize', verifyUser, async (req, res) => {
   const createBucketRes = await createBucket(getBucketIDFromUserID(userID));
   if (!createBucketRes) {
     res.send({
-      error: "failed to create user bucket"
+      error: "failed to create user bucket",
     });
     return;
   }
 
   // console.log(userID, createBucketRes);
-  res.status(200).send();
+  res.status(200).send({});
 });
 
 app.post("/GetDir", verifyUser, async (req, res) => {
@@ -92,106 +102,132 @@ app.post("/GetDir", verifyUser, async (req, res) => {
     return res.status(400).json({ error: "Path is required" });
   }
 
-  console.warn("No bucket permission check yet");
+  // console.warn("No bucket permission check yet");
 
-  let userID = user;
-  if (!userID) {
-    // no passed userID, thus they are requesting their own contents
-    const userObj = await DBGet('user', [['subID', '==', subID]]);
-    if (!userObj || userObj.length == 0) {
-      return res.status(400).json({ error: "Your account does not exist" });
-    }
-    userID = userObj[0].id;
+  let bucketOwnerID = user;
+  const userObjs = await DBGet("user", [["subID", "==", subID]]);
+  if (!userObjs || userObjs.length == 0) {
+    return res.status(400).json({ error: "Your account does not exist" });
+  }
+  const requestingUserID = userObjs[0].id;
+
+  if (!bucketOwnerID) {
+    // no passed bucketOwnerID, thus they are requesting their own contents
+    bucketOwnerID = userObjs[0].id;
   }
 
-  const bucketName = getBucketIDFromUserID(userID); // if user not passed, then request dir from user's bucket
+  const bucketName = getBucketIDFromUserID(bucketOwnerID); // if user not passed, then request dir from user's bucket
+  
+  const permissionResponse = await checkUserPermissions({
+    userID: requestingUserID,
+    bucketName,
+    path: path
+  });
+  if (!permissionResponse) {
+    return res.status(400).json({ error: "You do not have permissions to do that" });
+  }
+
   // console.log('getting', bucketName);
   const dirRes = await getDir({
     bucket: bucketName,
     path: path,
     continuationToken: continuationToken,
   });
+  console.log("GetDir", dirRes);
   res.send(dirRes);
 });
 
-
-
-// app.post('/GetUploadLink', verifyUser, async (req, res) => {
-//   const subID = req.user.id;
-//   const { fileName } = req.body;
-
-//   if (!fileName) {
-//     return res.status(400).json({ error: 'File name is required' });
-//   }
-
-//   const bucketName = subID;
-
-//   try {
-//     const params = {
-//       Bucket: bucketName,
-//       Key: fileName,
-//       Expires: 60 * 60, // Link valid for 1 hour
-//     };
-
-//     const uploadUrl = await s3.getSignedUrlPromise('putObject', params);
-//     res.json({ uploadUrl });
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: 'Failed to generate upload link' });
-//   }
-// });
-
-// app.post('/GetDownloadLink', verifyUser, async (req, res) => {
-//   const subID = req.user.id;
-//   const { fileName } = req.body;
-
-//   if (!fileName) {
-//     return res.status(400).json({ error: 'File name is required' });
-//   }
-
-//   const bucketName = subID;
-
-//   try {
-//     const params = {
-//       Bucket: bucketName,
-//       Key: fileName,
-//       Expires: 60 * 60, // Link valid for 1 hour
-//     };
-
-//     const downloadUrl = await s3.getSignedUrlPromise('getObject', params);
-//     res.json({ downloadUrl });
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: 'Failed to generate download link' });
-//   }
-// });
-
-
-
-app.post('/CreateFolder', verifyUser, async (req, res) => {
+app.post("/GetUploadLink", verifyUser, async (req, res) => {
   const subID = GetSubIDFromHeaders(req);
-  const { path, user } = req.body;
+  const { path, user, contentType } = req.body;
 
-  console.warn('No perm check');
+  console.warn("No perm check for DL");
+
+  if (!contentType || !path) {
+    return res.status(400).json({ error: "Path and contentType are required" });
+  }
 
   let userID = user;
   if (!userID) {
     // no passed userID, thus they are requesting their own contents
-    const userObj = await DBGet('user', [['subID', '==', subID]]);
-    if (!userObj || userObj.length == 0) {
+    const userObjs = await DBGet("user", [["subID", "==", subID]]);
+    if (!userObjs || userObjs.length == 0) {
       return res.status(400).json({ error: "Your account does not exist" });
     }
-    userID = userObj[0].id;
+    userID = userObjs[0].id;
   }
 
   const bucketName = getBucketIDFromUserID(userID);
-  
+
   // console.log('getting', bucketName);
-  const folderRes = await createFolder({
+  const uploadRes = await genSignedUploadURL({
     bucket: bucketName,
-    path: path,
-  })
-  res.send(folderRes);
+    key: path,
+    contentType: contentType,
+  });
+  res.send({ url: uploadRes });
+});
+
+app.post("/GetDownloadLink", verifyUser, async (req, res) => {
+  const subID = GetSubIDFromHeaders(req);
+  const { path, user } = req.body;
+
+  console.warn("No perm check for DL");
+
+  let userID = user;
+  if (!userID) {
+    // no passed userID, thus they are requesting their own contents
+    const userObjs = await DBGet("user", [["subID", "==", subID]]);
+    if (!userObjs || userObjs.length == 0) {
+      return res.status(400).json({ error: "Your account does not exist" });
+    }
+    userID = userObjs[0].id;
+  }
+
+  const bucketName = getBucketIDFromUserID(userID);
+
+  // console.log('getting', bucketName);
+  const downloadRes = await genSignedDownloadURL({
+    bucket: bucketName,
+    key: path,
+  });
+  res.send({ url: downloadRes });
+});
+
+app.post("/CreateFolder", verifyUser, async (req, res) => {
+  const subID = GetSubIDFromHeaders(req);
+  const { path, folderName, user } = req.body;
+
+  console.warn("No perm check");
+
+  let userID = user;
+  if (!userID) {
+    // no passed userID, thus they are requesting their own contents
+    const userObjs = await DBGet("user", [["subID", "==", subID]]);
+    if (!userObjs || userObjs.length == 0) {
+      return res.status(400).json({ error: "Your account does not exist" });
+    }
+    userID = userObjs[0].id;
+  }
+
+  const bucketName = getBucketIDFromUserID(userID);
+
+  // console.log('getting', bucketName);
+  try {
+    console.log('creating folder', path, folderName);
+    const folderRes = await createFolder({
+      bucket: bucketName,
+      path: path,
+      folderName: folderName,
+    });
+    console.log('created folder', path, folderName);
+    res.send({});
+  } catch (e) {
+    console.log('error', (e as Error).message);
+    res.status(403).send({
+      error: (e as Error).message,
+    });
+  }
 });
 
 app.post("/GetDir", verifyUser, async (req, res) => {
@@ -207,11 +243,11 @@ app.post("/GetDir", verifyUser, async (req, res) => {
   let userID = user;
   if (!userID) {
     // no passed userID, thus they are requesting their own contents
-    const userObj = await DBGet('user', [['subID', '==', subID]]);
-    if (!userObj || userObj.length == 0) {
+    const userObjs = await DBGet("user", [["subID", "==", subID]]);
+    if (!userObjs || userObjs.length == 0) {
       return res.status(400).json({ error: "Your account does not exist" });
     }
-    userID = userObj[0].id;
+    userID = userObjs[0].id;
   }
 
   const bucketName = getBucketIDFromUserID(userID); // if user not passed, then request dir from user's bucket
@@ -224,32 +260,63 @@ app.post("/GetDir", verifyUser, async (req, res) => {
   res.send(dirRes);
 });
 
-// app.post('/DeleteFile', verifyUser, async (req, res) => {
-//   const subID = req.user.id;
-//   const { fileName } = req.body;
+app.post("/DeleteFile", verifyUser, async (req, res) => {
+  const subID = GetSubIDFromHeaders(req);
+  const { path, user } = req.body;
 
-//   if (!fileName) {
-//     return res.status(400).json({ error: 'File name is required' });
-//   }
+  console.warn("No perm check");
 
-//   const bucketName = subID;
+  let userID = user;
+  if (!userID) {
+    // no passed userID, thus they are requesting their own contents
+    const userObjs = await DBGet("user", [["subID", "==", subID]]);
+    if (!userObjs || userObjs.length == 0) {
+      return res.status(400).json({ error: "Your account does not exist" });
+    }
+    userID = userObjs[0].id;
+  }
 
-//   try {
-//     await s3.deleteObject({
-//       Bucket: bucketName,
-//       Key: fileName,
-//     }).promise();
+  const bucketName = getBucketIDFromUserID(userID);
 
-//     res.json({ message: 'File deleted successfully' });
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: 'Failed to delete file' });
-//   }
-// });
+  // console.log('getting', bucketName);
+  const deleteRes = await deleteFile({
+    bucket: bucketName,
+    key: path,
+  });
+  if (!deleteRes) {
+    return res.send({ error: "Failed to delete file" });
+  }
+  res.send({});
+});
 
+app.post("/DeleteFolder", verifyUser, async (req, res) => {
+  const subID = GetSubIDFromHeaders(req);
+  const { path, user } = req.body;
 
+  console.warn("No perm check delete folder");
 
+  let userID = user;
+  if (!userID) {
+    // no passed userID, thus they are requesting their own contents
+    const userObjs = await DBGet("user", [["subID", "==", subID]]);
+    if (!userObjs || userObjs.length == 0) {
+      return res.status(400).json({ error: "Your account does not exist" });
+    }
+    userID = userObjs[0].id;
+  }
 
+  const bucketName = getBucketIDFromUserID(userID);
+
+  // console.log('getting', bucketName);
+  const deleteRes = await deleteDir({
+    bucket: bucketName,
+    path: path,
+  });
+  if (!deleteRes) {
+    return res.send({ error: "Failed to delete folder" });
+  }
+  res.send({});
+});
 
 // app.post('/Share', verifyUser, async (req, res) => {
 //   const subID = req.user.id;

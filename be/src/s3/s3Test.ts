@@ -124,7 +124,7 @@ const main2 = async () => {
 // main2();
 
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { createBucket, getDir } from "./s3";
+import { deleteDir, getDir } from "./s3";
 const main3 = async () => {
   const s3Client = new S3Client({});
 
@@ -172,7 +172,13 @@ const main4 = async () => {
 
 
 const main5 = async () => {
-  const r = await createBucket('bootyman');
-  console.log('created bucket:', r);
+  // const r = await createBucket('bootyman');
+  // console.log('created bucket:', r);
+
+  const r = await deleteDir({
+    bucket: "f57p4ya3cxw6wyk5f554re9gana3as9m",
+    path: 'What in the world/'
+  })
+  // console.log('t', r);
 }
-main5();
+// main5();

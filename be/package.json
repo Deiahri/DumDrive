@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon --exec ts-node -r tsconfig-paths/register ./src/index.ts",
     "dev2": "nodemon --exec ts-node -r tsconfig-paths/register ./src/s3/s3Test.ts",
-    "test": "vitest db.test.ts"
+    "test": "vitest",
+    "test2": "vitest s3.test.ts"
   },
   "keywords": [],
   "author": "",
