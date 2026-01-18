@@ -15,7 +15,7 @@ export function checkShare(obj: any): asserts obj is Share {
     throw new Error('path must be a string');
   }
 
-  if (file !== undefined && typeof file !== 'string') {
+  if (file !== null && typeof file !== 'string') {
     throw new Error('file must be a string if defined');
   }
 
@@ -23,9 +23,13 @@ export function checkShare(obj: any): asserts obj is Share {
     throw new Error('users must be an object');
   }
 
-  for (const [userID, value] of Object.entries(users)) {
-    if (typeof userID !== 'string' || typeof value !== 'boolean') {
-      throw new Error('users must be an object with string keys and boolean values');
+  if (!Array.isArray(users)) {
+    throw new Error('users must be an array of strings');
+  }
+
+  for (const user of users) {
+    if (typeof user !== 'string') {
+      throw new Error('users must be an array of strings');
     }
   }
 }

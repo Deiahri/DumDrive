@@ -17,7 +17,13 @@ import { ConvertToBase32, ExtractFromBase32, sleep } from "../scripts/tools";
 import { env_vars } from "../scripts/env_vars";
 import { checkBucketName } from "@shared/types/s3/S3Check";
 import { GetDirFilesPerRequest } from "@shared/types/s3/s3Data";
-import { DBCreate, DBDeleteWithID, DBGet, DBSetWithID, queryTuple } from "../db/db";
+import {
+  DBCreate,
+  DBDeleteWithID,
+  DBGet,
+  DBSetWithID,
+  queryTuple,
+} from "../db/db";
 import { Share } from "@shared/types/share/ShareType";
 import { checkShare } from "@shared/types/share/ShareCheck";
 import { DBObj } from "@shared/types/db/DBTypes";
@@ -147,7 +153,7 @@ export const createFolder = async ({
     new PutObjectCommand({
       Bucket: bucket,
       Key: totalPath,
-      Body: ""
+      Body: "",
     }),
   );
 };
@@ -259,11 +265,10 @@ export const getDir = async ({
  */
 export const createBucket = async (
   bucketName: string,
-  applyCorsSync?: boolean,
-  makeNameException?: boolean,
+  applyCorsSync?: boolean
 ) => {
   try {
-    checkBucketName(bucketName, makeNameException);
+    checkBucketName(bucketName);
 
     await s3.send(
       new CreateBucketCommand({
@@ -424,8 +429,8 @@ export const getBucketIDFromUserID = (userID: string) => {
 };
 
 export const getUserIDFromBucketID = (bucketID: string) => {
-  return ExtractFromBase32(bucketID);
-}
+  return ExtractFromBase32(bucketID.toUpperCase());
+};
 
 // TODO: bugs
 
@@ -455,10 +460,9 @@ export const resetAndCreateBucket = async (
     deleteDelay?: number;
     createDelay?: number;
     applyCorsSync?: boolean;
-    makeForbiddenException?: boolean;
   },
 ) => {
-  const { deleteDelay, createDelay, applyCorsSync, makeForbiddenException } =
+  const { deleteDelay, createDelay, applyCorsSync } =
     options || {};
   try {
     deleteDelay && (await sleep(deleteDelay));
@@ -472,8 +476,7 @@ export const resetAndCreateBucket = async (
     // console.log('')
     const createRes = await createBucket(
       bucketName,
-      applyCorsSync,
-      makeForbiddenException,
+      applyCorsSync
     );
     console.log("creaetd", createDelay, createRes);
     return createRes;
@@ -527,14 +530,18 @@ export const checkUserPermissions = async (params: {
   file?: string;
 }) => {
   // owner don't need permission SON!
-  const bucketOwnerID = ExtractFromBase32(params.bucketName);
-  if (bucketOwnerID == params.userID) {return true};
+  const bucketOwnerID = getUserIDFromBucketID(params.bucketName);
+  if (bucketOwnerID == params.userID) {
+    // console.log("match", params.bucketName, bucketOwnerID);
+    return true;
+  }
 
   // get all permissions that involve this user and bucketName
   const shares = await getUserPermissions(params);
+  console.log("existing shares", JSON.stringify(shares), '\n', JSON.stringify(params));
 
   // should have a valid share by this point, if not, false.
-  return shares.length != 1;
+  return shares.length > 0;
 };
 
 /**
@@ -564,27 +571,77 @@ export const getUserPermissions = async (params: {
   const query: queryTuple[] = [
     ["users", "array-contains", userID],
     ["bucketName", "==", bucketName],
-    ["path", "==", path],
+    ["path", "in", [path]]
   ];
 
-  if (file) {
-    query.push(["file", "==", file]);
-  }
-
-  const shares = await DBGet("share", query);
-  const validShares: (Share & DBObj)[] = [];
-  for (const share of shares) {
+  // folder wide query first
+  const folderWideShare = await DBGet("share", query);
+  console.log('fwS getUserPerm shares', JSON.stringify(folderWideShare));
+  const validDirWideShares: (Share & DBObj)[] = []; // all shares in given directory, even if they're file specific.
+  for (const share of folderWideShare) {
     try {
       checkShare(share);
-      validShares.push(share);
+      validDirWideShares.push(share);
     } catch (e) {
-      console.error('getUserPermissions', (e as Error).message);
+      console.error("getUserPermissions", (e as Error).message);
+    }
+  }
+  console.log('filewideshared after check len', validDirWideShares.length);
+
+  
+  if (file) {
+    // if file is specified, then we need to look for a specific file share, or a dir wide share
+    for (const share of validDirWideShares) {
+      if (share.file == null || share.file == file) return [share];
+    }
+  } else {
+    // if file isn't, we're looking for a folder wide share. (file is undefined for folder wide share)
+    for (const share of validDirWideShares) {
+      if (share.file == undefined) return [share];
     }
   }
 
-  return validShares;
-};
+  // if we made it to this point, the user doesn't have perms for that given directory or file
+  // that said, they could have perms for a higher directory
+  // e.g.: requesting for /a/b/c/ when they have perms for a/b/
 
+  // turn path from /a/b/c/ into -> [a/, a/b, a/b/c/]
+  const pathSplit = path.split('/');
+  // always pop last item, as its probably an empty string
+  pathSplit.pop();
+
+  const nestedPaths: string[] = [];
+  let currentNestedPath = '';
+  nestedPaths.push(currentNestedPath);
+  for (const pathChunk of pathSplit) {
+    currentNestedPath += pathChunk + '/';
+    nestedPaths.push(currentNestedPath);
+  }
+  
+  // look for possible perms that 
+  const pathPermQuery: queryTuple[] = [
+    ["users", "array-contains", userID],
+    ["bucketName", "==", bucketName],
+    ["path", "in", nestedPaths],
+    ['file', '==', null] // not looking for file level permissions this time.
+  ];
+
+  // folder wide query first
+  const nestedFolderPermShares = await DBGet("share", pathPermQuery);
+  console.log('nestedPathQuery', JSON.stringify(nestedFolderPermShares));
+  const validNestedFolderPermShares: (Share & DBObj)[] = [];
+  for (const share of nestedFolderPermShares) {
+    try {
+      checkShare(share);
+      validNestedFolderPermShares.push(share);
+    } catch (e) {
+      console.error('invalid share', share, (e as Error).message);
+      // TODO: don't fail silently
+    }
+  }
+
+  return validNestedFolderPermShares;
+};
 
 export const addUserPermissions = async (params: {
   userID: string;
@@ -610,10 +667,11 @@ export const addUserPermissions = async (params: {
       const newShare: Share = {
         bucketName,
         path,
-        file,
+        file: file || null,
         users: [userID],
       };
       await DBCreate("share", newShare);
+      console.log('creating mud', newShare);
     }
 
     return true;
@@ -621,7 +679,7 @@ export const addUserPermissions = async (params: {
     console.error("Error adding user permissions:", (e as Error).message);
     return false;
   }
-}
+};
 
 export const removeUserPermissions = async (params: {
   userID: string;

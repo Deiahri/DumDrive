@@ -18,11 +18,12 @@ type comparisonOperator =
   | ">="
   | "=="
   | "!="
-  | "array-contains";
+  | "array-contains"
+  | "in"; // TODO: add testing for in. Note: this allows last item of queryTuple to be string array.
 export type queryTuple = [
   string,
   comparisonOperator,
-  string | null | number | boolean
+  string | null | number | boolean | string[]
 ];
 type queryStyle = "or" | "and";
 type orderDirection = "asc" | "desc";

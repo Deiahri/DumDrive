@@ -18,5 +18,5 @@ export interface S3Folder {
   isLoading?: boolean
 };
 
-export const ForbiddenS3BucketPrefixes = ['s3test'] as const;
-export type ForbiddenS3BucketPrefix = (typeof ForbiddenS3BucketPrefixes[number]);
+// export const ForbiddenS3BucketPrefixes = ['s3test'] as const;
+// export type ForbiddenS3BucketPrefix = (typeof ForbiddenS3BucketPrefixes[number]);
