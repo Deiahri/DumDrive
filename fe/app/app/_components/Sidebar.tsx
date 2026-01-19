@@ -15,6 +15,7 @@ const Sidebar: React.FC<SidebarProps> = () => {
   const { setDirData, DirData } = useAppContext();
   const path = getParams("p");
   const user = getParams("u");
+  const bucket = getParams("b");
   const AuthedFetch = useAuthedFetch();
 
   const onAddFileClick = async () => {
@@ -52,8 +53,10 @@ const Sidebar: React.FC<SidebarProps> = () => {
               method: "POST",
               body: JSON.stringify({
                 user,
-                path: (path || "") + file.name,
+                path: (path || ""),
+                file: file.name,
                 contentType: file.type,
+                bucket
               }),
             },
           );
@@ -121,6 +124,7 @@ const Sidebar: React.FC<SidebarProps> = () => {
           body: JSON.stringify({
             path: path,
             folderName: folderName,
+            bucket
           }),
         })
       ).json();

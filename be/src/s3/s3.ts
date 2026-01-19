@@ -27,6 +27,7 @@ import {
 import { Share } from "@shared/types/share/ShareType";
 import { checkShare } from "@shared/types/share/ShareCheck";
 import { DBObj } from "@shared/types/db/DBTypes";
+import { DocumentTestKey } from "@shared/types/db/DBData";
 
 const s3 = new S3Client({
   // region: "us-east-2",
@@ -34,16 +35,21 @@ const s3 = new S3Client({
 
 export const genSignedUploadURL = async ({
   bucket,
-  key,
+  path,
+  file,
   contentType,
 }: {
   bucket: string;
-  key: string;
+  path: string;
+  file: string;
   contentType: string;
 }) => {
+  if (path != '' && path.charAt(path.length - 1) != '/') path += '/';
+  if (file.charAt(file.length - 1) != '/') file += '/';
+
   const command = new PutObjectCommand({
     Bucket: bucket,
-    Key: key,
+    Key: path + file,
     ContentType: contentType,
   });
 
@@ -56,18 +62,23 @@ export const genSignedUploadURL = async ({
 
 export const genSignedDownloadURL = async ({
   bucket,
-  key,
+  path,
+  file
 }: {
   bucket: string;
-  key: string;
+  path: string;
+  file: string;
 }) => {
+  if (path != '' && path.charAt(path.length - 1) != '/') path += '/';
+  if (file.charAt(file.length - 1) != '/') file += '/';
+
   const getCommand = new GetObjectCommand({
     Bucket: bucket,
-    Key: key,
+    Key: path + file,
   });
 
   const url = await getSignedUrl(s3, getCommand, {
-    expiresIn: 180,
+    expiresIn: 60,
   });
 
   // console.log("dl", url);
@@ -77,16 +88,20 @@ export const genSignedDownloadURL = async ({
 
 export const deleteFile = async ({
   bucket,
-  key,
+  path,
+  file
 }: {
   bucket: string;
-  key: string;
+  path: string;
+  file: string;
 }) => {
   try {
+  if (path != '' && path.charAt(path.length - 1) != '/') path += '/';
+  if (file.charAt(file.length - 1) != '/') file += '/';
     await s3.send(
       new DeleteObjectCommand({
         Bucket: bucket,
-        Key: key,
+        Key: path+file,
       }),
     );
   } catch {
@@ -527,7 +542,7 @@ export const checkUserPermissions = async (params: {
   userID: string;
   bucketName: string;
   path: string;
-  file?: string;
+  file: string | null;
 }) => {
   // owner don't need permission SON!
   const bucketOwnerID = getUserIDFromBucketID(params.bucketName);
@@ -543,6 +558,37 @@ export const checkUserPermissions = async (params: {
   // should have a valid share by this point, if not, false.
   return shares.length > 0;
 };
+
+
+export const getDirOrFilePermissions = async (params: {
+  bucketName: string;
+  path: string;
+  file: string | null;
+}) => {
+  const { bucketName, path, file } = params;
+
+  const query: queryTuple[] = [
+    ["bucketName", "==", bucketName],
+    ["path", "in", [path]],
+    ['file', '==', file]
+  ];
+
+  // folder wide query first
+  const res = await DBGet("share", query);
+  const validShares: (Share & DBObj)[] = [];
+  for (const share of res) {
+    try {
+      checkShare(share);
+      validShares.push(share);
+    } catch (e) {
+      // TODO: fix silent fail
+      console.error('getDirOrFilePermFail', (e as Error).message);
+    }
+  }
+
+  return validShares;
+}
+
 
 /**
  * Retrieves all permissions (shares) for a specific user, bucket, path, and optionally a file.
@@ -564,23 +610,16 @@ export const getUserPermissions = async (params: {
   userID: string;
   bucketName: string;
   path: string;
-  file?: string;
+  file: string | null;
 }): Promise<(Share & DBObj)[]> => {
-  const { userID, bucketName, path, file } = params;
-
-  const query: queryTuple[] = [
-    ["users", "array-contains", userID],
-    ["bucketName", "==", bucketName],
-    ["path", "in", [path]]
-  ];
-
-  // folder wide query first
-  const folderWideShare = await DBGet("share", query);
+  const { file, path, userID, bucketName } = params;
+  const folderWideShare = await getDirOrFilePermissions(params);
   console.log('fwS getUserPerm shares', JSON.stringify(folderWideShare));
   const validDirWideShares: (Share & DBObj)[] = []; // all shares in given directory, even if they're file specific.
   for (const share of folderWideShare) {
     try {
       checkShare(share);
+      if (!share.users.includes(userID)) continue; // ingore any shares not including this user
       validDirWideShares.push(share);
     } catch (e) {
       console.error("getUserPermissions", (e as Error).message);
@@ -643,35 +682,44 @@ export const getUserPermissions = async (params: {
   return validNestedFolderPermShares;
 };
 
+
+
 export const addUserPermissions = async (params: {
-  userID: string;
+  userIDs: string[];
   bucketName: string;
   path: string;
-  file?: string;
+  file: string | null;
+  testing?: boolean
 }) => {
   try {
-    const { userID, bucketName, path, file } = params;
+    const { userIDs, bucketName, path, file, testing } = params;
 
     // Check if a share already exists
-    const existingShares = await getUserPermissions(params);
+    const existingShares = await getDirOrFilePermissions(params);
     if (existingShares.length > 0) {
       const existingShare = existingShares[0];
 
-      // Add user to the existing share's user list
-      if (!existingShare.users.includes(userID)) {
-        existingShare.users.push(userID);
-        await DBSetWithID("share", existingShare.id, existingShare);
+      for (const userID of userIDs) {
+        // Add user to the existing share's user list
+        if (!existingShare.users.includes(userID)) {
+          existingShare.users.push(userID);
+        }
       }
+      await DBSetWithID("share", existingShare.id, existingShare);
     } else {
       // Create a new share
       const newShare: Share = {
         bucketName,
         path,
         file: file || null,
-        users: [userID],
+        users: userIDs,
       };
+
+      if (testing) {
+        newShare[DocumentTestKey] = true;
+      }
       await DBCreate("share", newShare);
-      console.log('creating mud', newShare);
+      console.log('added', params);
     }
 
     return true;
@@ -682,24 +730,24 @@ export const addUserPermissions = async (params: {
 };
 
 export const removeUserPermissions = async (params: {
-  userID: string;
+  userIDs: string[];
   bucketName: string;
   path: string;
-  file?: string;
+  file: string | null;
 }) => {
   try {
-    const { userID } = params;
+    const { userIDs } = params;
 
     // Check if a share exists
-    const existingShares = await getUserPermissions(params);
+    const existingShares = await getDirOrFilePermissions(params);
     if (existingShares.length > 0) {
       const existingShare = existingShares[0];
 
-      // Remove user from the existing share's user list
-      const userIndex = existingShare.users.indexOf(userID);
-      if (userIndex !== -1) {
-        existingShare.users.splice(userIndex, 1);
-      }
+      // Remove users from the existing share's user list
+      existingShare.users = existingShare.users.filter(
+        (user) => !userIDs.includes(user),
+      );
+
       if (existingShare.users.length === 0) {
         // Call the delete function if no users are left
         await DBDeleteWithID("share", existingShare.id);

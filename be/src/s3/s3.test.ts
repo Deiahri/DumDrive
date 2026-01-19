@@ -19,177 +19,178 @@ import {
 import { checkBucketName } from "@shared/types/s3/S3Check";
 import { GetDirFilesPerRequest } from "@shared/types/s3/s3Data";
 import { DocumentTestKey } from "@shared/types/db/DBData";
-import { DBCreate, DBGet } from "../db/db";
+import { DBGet } from "../db/db";
 
 const bucketPrefix = "s3test";
 
 describe("s3.test.ts", async () => {
-  // const s3ResetAndCreateBucketName = bucketPrefix + "-reset-and-create";
-  // describe("resetAndCreateBucket", async () => {
-  //   it("Should create and destry", async () => {
-  //     checkBucketName(s3ResetAndCreateBucketName);
-  //     const response = await resetAndCreateBucket(s3ResetAndCreateBucketName);
-  //     expect(response).toBe(true);
-  //   });
-  // });
+  const s3ResetAndCreateBucketName = getBucketIDFromUserID(bucketPrefix + "-reset-and-create");
+  describe("resetAndCreateBucket", async () => {
+    it("Should create and destroy", async () => {
+      console.log(s3ResetAndCreateBucketName);
+      checkBucketName(s3ResetAndCreateBucketName);
+      const response = await resetAndCreateBucket(s3ResetAndCreateBucketName);
+      expect(response).toBe(true);
+    });
+  });
 
-  // const createBucketName = getBucketIDFromUserID(bucketPrefix + "-create-bucket-test"); // converted to bucket name
-  // describe("createBucket", async () => {
-  //   it("should delete the bucket if it exists, create a new bucket, and verify its existence", async () => {
-  //     // Ensure the bucket does not exist
-  //     await deleteBucket(createBucketName);
+  const createBucketName = getBucketIDFromUserID(bucketPrefix + "-create-bucket-test"); // converted to bucket name
+  describe("createBucket", async () => {
+    it("should delete the bucket if it exists, create a new bucket, and verify its existence", async () => {
+      // Ensure the bucket does not exist
+      await deleteBucket(createBucketName);
 
-  //     // Create the bucket
-  //     const createResponse = await createBucket(createBucketName, true);
-  //     expect(createResponse).toBe(true);
+      // Create the bucket
+      const createResponse = await createBucket(createBucketName, true);
+      expect(createResponse).toBe(true);
 
-  //     // Verify the bucket exists
-  //     expect(
-  //       async () =>
-  //         await waitForBucketExistState(createBucketName, true, 10000),
-  //     ).not.toThrow();
+      // Verify the bucket exists
+      expect(
+        async () =>
+          await waitForBucketExistState(createBucketName, true, 10000),
+      ).not.toThrow();
 
-  //     // Get CORS settings and ensure they are not null
-  //     const corsSettings = await getCors(createBucketName);
-  //     expect(corsSettings).not.toBeNull();
-  //   }, 15000);
-  // });
+      // Get CORS settings and ensure they are not null
+      const corsSettings = await getCors(createBucketName);
+      expect(corsSettings).not.toBeNull();
+    }, 15000);
+  });
 
-  // const deleteBucketName = bucketPrefix + "-delete-bucket-test";
-  // describe("deleteBucket", async () => {
-  //   it("should create a bucket, delete it, and verify it no longer exists", async () => {
-  //     // Create the bucket (disregard output)
-  //     await createBucket(deleteBucketName, true);
+  const deleteBucketName = getBucketIDFromUserID(bucketPrefix + "-delete-bucket-test");
+  describe("deleteBucket", async () => {
+    it("should create a bucket, delete it, and verify it no longer exists", async () => {
+      // Create the bucket (disregard output)
+      await createBucket(deleteBucketName, true);
 
-  //     // Delete the bucket
-  //     const deleteResponse = await deleteBucket(deleteBucketName);
-  //     expect(deleteResponse).toBe(true);
+      // Delete the bucket
+      const deleteResponse = await deleteBucket(deleteBucketName);
+      expect(deleteResponse).toBe(true);
 
-  //     // Verify the bucket no longer exists
-  //     expect(
-  //       async () =>
-  //         await waitForBucketExistState(deleteBucketName, false, 10000),
-  //     ).not.toThrow();
-  //   }, 15000);
-  // });
+      // Verify the bucket no longer exists
+      expect(
+        async () =>
+          await waitForBucketExistState(deleteBucketName, false, 10000),
+      ).not.toThrow();
+    }, 15000);
+  });
 
-  // const getDirBucketName = bucketPrefix + "-get-dir-test";
-  // describe("getDir", async () => {
-  //   it("should delete bucket before testing", async () => {
-  //     // Ensure the bucket is deleted if it exists
-  //     await deleteBucket(getDirBucketName);
-  //     expect(
-  //       async () =>
-  //         await waitForBucketExistState(getDirBucketName, false, 10000),
-  //     ).not.toThrow();
-  //   }, 15000);
+  const getDirBucketName = getBucketIDFromUserID(bucketPrefix + "-get-dir-test");
+  describe("getDir", async () => {
+    it("should delete bucket before testing", async () => {
+      // Ensure the bucket is deleted if it exists
+      await deleteBucket(getDirBucketName);
+      expect(
+        async () =>
+          await waitForBucketExistState(getDirBucketName, false, 10000),
+      ).not.toThrow();
+    }, 15000);
 
-  //   it("should return an empty GetDirResponse with success false if the bucket doesn't exist", async () => {
-  //     // Check if the bucket exists
-  //     const bucketExists = await doesBucketExist(getDirBucketName);
-  //     expect(bucketExists).toBe(false);
-  //     const response = await getDir({ bucket: getDirBucketName, path: "" });
-  //     expect(response).toEqual({
-  //       files: [],
-  //       folders: [],
-  //       path: "",
-  //       success: false,
-  //     });
-  //   });
+    it("should return an empty GetDirResponse with success false if the bucket doesn't exist", async () => {
+      // Check if the bucket exists
+      const bucketExists = await doesBucketExist(getDirBucketName); // TODO: this is very flaky on tests for some reason.
+      expect(bucketExists).toBe(false);
+      const response = await getDir({ bucket: getDirBucketName, path: "" });
+      expect(response).toEqual({
+        files: [],
+        folders: [],
+        path: "",
+        success: false,
+      });
+    });
 
-  //   it("should return an empty GetDirResponse with success true after creating the bucket", async () => {
-  //     await createBucket(getDirBucketName, true);
-  //     const response = await getDir({ bucket: getDirBucketName, path: "" });
-  //     expect(response).toEqual({
-  //       files: [],
-  //       folders: [],
-  //       path: "",
-  //       success: true,
-  //     });
-  //   });
+    it("should return an empty GetDirResponse with success true after creating the bucket", async () => {
+      await createBucket(getDirBucketName, true);
+      const response = await getDir({ bucket: getDirBucketName, path: "" });
+      expect(response).toEqual({
+        files: [],
+        folders: [],
+        path: "",
+        success: true,
+      });
+    });
 
-  //   it("should return one file after adding a file to the bucket", async () => {
-  //     const fileName = "test.txt";
-  //     const fileBody = "Non-empty string";
+    it("should return one file after adding a file to the bucket", async () => {
+      const fileName = "test.txt";
+      const fileBody = "Non-empty string";
 
-  //     // Add a file to the bucket
-  //     await createFile({
-  //       bucket: getDirBucketName,
-  //       path: "",
-  //       fileName,
-  //       body: fileBody,
-  //     });
+      // Add a file to the bucket
+      await createFile({
+        bucket: getDirBucketName,
+        path: "",
+        fileName,
+        body: fileBody,
+      });
 
-  //     // Get directory contents
-  //     const response = await getDir({ bucket: getDirBucketName, path: "" });
-  //     expect(response.success).toBe(true);
-  //     expect(response.files).toHaveLength(1);
-  //     expect(response.files[0]).toEqual(
-  //       expect.objectContaining({
-  //         name: fileName,
-  //         size: fileBody.length,
-  //       }),
-  //     );
-  //     expect(response.folders).toHaveLength(0);
-  //   });
+      // Get directory contents
+      const response = await getDir({ bucket: getDirBucketName, path: "" });
+      expect(response.success).toBe(true);
+      expect(response.files).toHaveLength(1);
+      expect(response.files[0]).toEqual(
+        expect.objectContaining({
+          name: fileName,
+          size: fileBody.length,
+        }),
+      );
+      expect(response.folders).toHaveLength(0);
+    });
 
-  //   it("should handle multiple files and return correct continuation tokens", async () => {
-  //     // deletes all files in the directory first.
-  //     const res = await deleteDir({
-  //       bucket: getDirBucketName,
-  //       path: "",
-  //     });
-  //     expect(res).toBe(true);
+    it("should handle multiple files and return correct continuation tokens", async () => {
+      // deletes all files in the directory first.
+      const res = await deleteDir({
+        bucket: getDirBucketName,
+        path: "",
+      });
+      expect(res).toBe(true);
 
-  //     const filePrefix = "file-";
-  //     const fileBody = "Sample content";
-  //     const totalFiles = GetDirFilesPerRequest + 50; // More than the max files per request
+      const filePrefix = "file-";
+      const fileBody = "Sample content";
+      const totalFiles = GetDirFilesPerRequest + 50; // More than the max files per request
 
-  //     // Add multiple files to the bucket
-  //     const fileCreationPromises = [];
-  //     for (let i = 0; i < totalFiles; i++) {
-  //       fileCreationPromises.push(
-  //         createFile({
-  //           bucket: getDirBucketName,
-  //           path: "",
-  //           fileName: `${filePrefix}${i}.txt`,
-  //           body: fileBody,
-  //         }),
-  //       );
-  //     }
-  //     await Promise.all(fileCreationPromises);
+      // Add multiple files to the bucket
+      const fileCreationPromises = [];
+      for (let i = 0; i < totalFiles; i++) {
+        fileCreationPromises.push(
+          createFile({
+            bucket: getDirBucketName,
+            path: "",
+            fileName: `${filePrefix}${i}.txt`,
+            body: fileBody,
+          }),
+        );
+      }
+      await Promise.all(fileCreationPromises);
 
-  //     // Get the first batch of files (max files per request)
-  //     const firstBatch = await getDir({ bucket: getDirBucketName, path: "" });
-  //     expect(firstBatch.success).toBe(true);
-  //     expect(firstBatch.files).toHaveLength(GetDirFilesPerRequest);
-  //     expect(firstBatch.nextContinuationToken).toBeDefined();
+      // Get the first batch of files (max files per request)
+      const firstBatch = await getDir({ bucket: getDirBucketName, path: "" });
+      expect(firstBatch.success).toBe(true);
+      expect(firstBatch.files).toHaveLength(GetDirFilesPerRequest);
+      expect(firstBatch.nextContinuationToken).toBeDefined();
 
-  //     // Get the second batch of files using the continuation token
-  //     const secondBatch = await getDir({
-  //       bucket: getDirBucketName,
-  //       path: "",
-  //       continuationToken: firstBatch.nextContinuationToken,
-  //     });
-  //     expect(secondBatch.success).toBe(true);
-  //     expect(secondBatch.files).toHaveLength(
-  //       totalFiles - GetDirFilesPerRequest,
-  //     ); // Remaining files
-  //     expect(secondBatch.nextContinuationToken).toBeUndefined();
+      // Get the second batch of files using the continuation token
+      const secondBatch = await getDir({
+        bucket: getDirBucketName,
+        path: "",
+        continuationToken: firstBatch.nextContinuationToken,
+      });
+      expect(secondBatch.success).toBe(true);
+      expect(secondBatch.files).toHaveLength(
+        totalFiles - GetDirFilesPerRequest,
+      ); // Remaining files
+      expect(secondBatch.nextContinuationToken).toBeUndefined();
 
-  //     // Verify all files are accounted for
-  //     const allFiles = [...firstBatch.files, ...secondBatch.files];
-  //     expect(allFiles).toHaveLength(totalFiles);
-  //     for (let i = 0; i < totalFiles; i++) {
-  //       expect(allFiles).toContainEqual(
-  //         expect.objectContaining({
-  //           name: `${filePrefix}${i}.txt`,
-  //           size: fileBody.length,
-  //         }),
-  //       );
-  //     }
-  //   }, 50000);
-  // });
+      // Verify all files are accounted for
+      const allFiles = [...firstBatch.files, ...secondBatch.files];
+      expect(allFiles).toHaveLength(totalFiles);
+      for (let i = 0; i < totalFiles; i++) {
+        expect(allFiles).toContainEqual(
+          expect.objectContaining({
+            name: `${filePrefix}${i}.txt`,
+            size: fileBody.length,
+          }),
+        );
+      }
+    }, 50000);
+  });
 
   describe("checkUserPermissions", async () => {
     describe("initial tests", () => {
@@ -198,13 +199,12 @@ describe("s3.test.ts", async () => {
         bucketName: noiseBucketName,
         path: `test-path-${i}`,
         file: `test-file-${i}.txt`,
-        users: [`user${i}`],
-        [DocumentTestKey]: true,
+        userIDs: [`user${i}`]
       }));
 
       it("should create multiple test share documents as noise", async () => {
         // Create all test share documents in parallel
-        await Promise.all(testShares.map((share) => DBCreate("share", share)));
+        await Promise.all(testShares.map((share) => addUserPermissions({...share, testing: true})));
 
         // Verify that the documents were created
         const createdShares = await DBGet("share", [
@@ -215,7 +215,7 @@ describe("s3.test.ts", async () => {
 
         const testShare = testShares[0];
         const res = await DBGet("share", [
-          ["users", "array-contains", testShare.users[0]],
+          ["users", "array-contains", testShare.userIDs[0]],
           ["bucketName", "==", testShare.bucketName],
           ["path", "==", testShare.path],
           ["file", "==", testShare.file],
@@ -226,7 +226,7 @@ describe("s3.test.ts", async () => {
       it("should return true for checkUserPermissions with test share data", async () => {
         for (const share of testShares) {
           const response = await checkUserPermissions({
-            userID: share.users[0],
+            userID: share.userIDs[0],
             bucketName: share.bucketName,
             path: share.path,
             file: share.file,
@@ -241,8 +241,8 @@ describe("s3.test.ts", async () => {
       const bucketName = getBucketIDFromUserID(testUser);
 
       const testCases = [
-        { userID: testUser, bucketName, path: "", file: undefined },
-        { userID: testUser, bucketName, path: "folder1/", file: undefined },
+        { userID: testUser, bucketName, path: "", file: null },
+        { userID: testUser, bucketName, path: "folder1/", file: null },
         { userID: testUser, bucketName, path: "folder2/", file: "file1.txt" },
         {
           userID: testUser,
@@ -264,8 +264,8 @@ describe("s3.test.ts", async () => {
       const bucketName = "non-existent";
 
       const testCases = [
-        { userID: testUser, bucketName, path: "", file: undefined },
-        { userID: testUser, bucketName, path: "folder1/", file: undefined },
+        { userID: testUser, bucketName, path: "", file: null },
+        { userID: testUser, bucketName, path: "folder1/", file: null },
         { userID: testUser, bucketName, path: "folder2/", file: "file1.txt" },
         {
           userID: testUser,
@@ -297,6 +297,7 @@ describe("s3.test.ts", async () => {
         userID: testUser,
         bucketName,
         path: "",
+        file: null,
       });
       expect(response).toBe(false);
     });
@@ -307,7 +308,7 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for a specific file
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "folder1/",
         file: "file1.txt",
@@ -330,7 +331,7 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for a specific file
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "folder1/",
         file: "file1.txt",
@@ -352,7 +353,7 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for a specific file
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "folder1/",
         file: "file1.txt",
@@ -373,6 +374,7 @@ describe("s3.test.ts", async () => {
         userID: testUser,
         bucketName,
         path: "folder1/",
+        file: null,
       });
       expect(response).toBe(false);
     });
@@ -383,9 +385,10 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for the folder
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "folder1/",
+        file: null,
       });
       expect(addPermissionResponse).toBe(true);
 
@@ -394,6 +397,7 @@ describe("s3.test.ts", async () => {
         userID: testUser,
         bucketName,
         path: "folder1/",
+        file: null,
       });
       expect(response).toBe(true);
 
@@ -422,9 +426,10 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for a nested folder
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "a/b/c/",
+        file: null,
       });
       expect(addPermissionResponse).toBe(true);
 
@@ -433,6 +438,7 @@ describe("s3.test.ts", async () => {
         userID: testUser,
         bucketName,
         path: "a/b/",
+        file: null,
       });
       expect(response).toBe(false);
     });
@@ -443,9 +449,10 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for the parent folder
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "a/",
+        file: null,
       });
       expect(addPermissionResponse).toBe(true);
 
@@ -454,6 +461,7 @@ describe("s3.test.ts", async () => {
         userID: testUser,
         bucketName,
         path: "a/b/",
+        file: null,
       });
       expect(response).toBe(true);
     });
@@ -464,15 +472,16 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for the base directory
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "",
+        file: null,
       });
       expect(addPermissionResponse).toBe(true);
 
       const testCases = [
-        { userID: testUser, bucketName, path: "", file: undefined },
-        { userID: testUser, bucketName, path: "folder1/", file: undefined },
+        { userID: testUser, bucketName, path: "", file: null },
+        { userID: testUser, bucketName, path: "folder1/", file: null },
         { userID: testUser, bucketName, path: "folder2/", file: "file1.txt" },
         {
           userID: testUser,
@@ -495,7 +504,7 @@ describe("s3.test.ts", async () => {
 
       // Add user permissions for a specific file in the base directory
       const addPermissionResponse = await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName,
         path: "",
         file: "base-file.txt",
@@ -514,14 +523,14 @@ describe("s3.test.ts", async () => {
           userID: testUser,
           bucketName,
           path: "",
-          file: undefined,
+          file: null,
           expected: false,
         },
         {
           userID: testUser,
           bucketName,
           path: "folder1/",
-          file: undefined,
+          file: null,
           expected: false,
         },
         {
@@ -558,7 +567,7 @@ describe("s3.test.ts", async () => {
       await createBucket(testBucketName, true);
       // Add user permissions to the bucket, path, and file
       await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName: testBucketName,
         path: testPath,
         file: testFile,
@@ -568,7 +577,7 @@ describe("s3.test.ts", async () => {
     it("should remove user permissions for a specific file", async () => {
       // Remove user permissions for the specific file
       const result = await removeUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName: testBucketName,
         path: testPath,
         file: testFile,
@@ -590,16 +599,18 @@ describe("s3.test.ts", async () => {
     it("should remove user permissions for a specific path", async () => {
       // Add user permissions again for the path
       await addUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName: testBucketName,
         path: testPath,
+        file: null,
       });
 
       // Remove user permissions for the path
       const result = await removeUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName: testBucketName,
         path: testPath,
+        file: null,
       });
 
       expect(result).toBe(true);
@@ -609,6 +620,7 @@ describe("s3.test.ts", async () => {
         userID: testUser,
         bucketName: testBucketName,
         path: testPath,
+        file: null,
       });
 
       expect(permissions).toHaveLength(0);
@@ -619,9 +631,10 @@ describe("s3.test.ts", async () => {
 
       // Attempt to remove permissions for a non-existent user
       const result = await removeUserPermissions({
-      userID: nonExistentUser,
-      bucketName: testBucketName,
-      path: testPath,
+        userIDs: [nonExistentUser],
+        bucketName: testBucketName,
+        path: testPath,
+        file: null,
       });
 
       // Since the system doesn't check if the user exists, it should still return true
@@ -633,9 +646,10 @@ describe("s3.test.ts", async () => {
 
       // Attempt to remove permissions for a non-existent bucket
       const result = await removeUserPermissions({
-        userID: testUser,
+        userIDs: [testUser],
         bucketName: nonExistentBucket,
         path: testPath,
+        file: null,
       });
 
       expect(result).toBe(true); // it will succeed in the removal, as it doesn't check for if the user exists or not.

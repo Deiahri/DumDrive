@@ -1,10 +1,13 @@
 "use client";
-import { FaChevronLeft } from "react-icons/fa6";
 import useCustomSearchParams from "../_hooks/useCustomSearchParams";
 import DirRenderer from "./_components/DirRenderer";
 import Sidebar from "./_components/Sidebar";
 import { AppProvider } from "./_context/AppContext";
 import React from "react";
+import { BiGroup } from "react-icons/bi";
+import ShareModal from "./_components/ShareModal";
+import { BsThreeDotsVertical } from "react-icons/bs";
+import ModifyFileOrFolderDots from "./_components/ModifyFileOrFolderDots";
 
 export default function AppController() {
   // const b = useCustomSearchParams();
@@ -12,6 +15,7 @@ export default function AppController() {
 
   const userBucket = getParams("u");
   const path = getParams("p");
+  const bucket = getParams("b");
 
   const handleBreadcrumbTraversal = (newPath: string) => {
     if (newPath == path) return;
@@ -19,7 +23,7 @@ export default function AppController() {
       {
         p: newPath,
       },
-      false
+      false,
     );
   };
 
@@ -108,10 +112,11 @@ export default function AppController() {
               path={path || ""}
               onClick={handleBreadcrumbTraversal}
             />
-            <DirRenderer path={path} user={userBucket} />
+            <DirRenderer path={path} user={userBucket} bucket={bucket} />
           </div>
         </div>
       </div>
+      <ShareModal />
     </AppProvider>
   );
 }
@@ -134,13 +139,38 @@ function Breadcrumbs({
   };
 
   if (pathSegments.length < 1) {
-    return <span style={{ fontSize: "2rem" }}>My Drive</span>;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+        >
+          <span style={{ fontSize: "2rem" }}>My Drive</span>
+          {/* <BiGroup style={{cursor: 'pointer'}} size={'1.5rem'} /> */}
+          <ModifyFileOrFolderDots
+            openLeftOrRight="right"
+            style={{ cursor: "pointer" }}
+            file={null}
+            path={''}
+          />
+          <BiGroup style={{ cursor: "pointer" }} size={"1.5rem"} />
+        </div>
+      </div>
+    );
   }
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
       {/* <FaChevronLeft style={{cursor: 'pointer'}} onClick={() => handleClick(-1)} /> */}
-      <span style={{ fontSize: "1.5rem", cursor: 'pointer' }} onClick={() => handleClick(-1)}>
+      <span
+        style={{ fontSize: "1.5rem", cursor: "pointer" }}
+        onClick={() => handleClick(-1)}
+      >
         /
       </span>
       {pathSegments.map((segment, index) => {

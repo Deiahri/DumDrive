@@ -4,5 +4,6 @@ export interface UserObj {
   subID: string,
   email: string,
   username: string,
-  [DocumentTestKey]?: boolean
+  [DocumentTestKey]?: boolean,
+  id?: string
 };

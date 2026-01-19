@@ -2,6 +2,7 @@ import "./scripts/env_vars";
 import express from "express";
 import verifyUser, { GetSubIDFromHeaders } from "./middleware/VerifyUser";
 import {
+  addUserPermissions,
   checkUserPermissions,
   createBucket,
   createFolder,
@@ -11,12 +12,16 @@ import {
   genSignedUploadURL,
   getBucketIDFromUserID,
   getDir,
+  getDirOrFilePermissions,
+  removeUserPermissions,
 } from "./s3/s3";
 import cors from "cors";
 import { env_vars } from "./scripts/env_vars";
-import { DBCreate, DBDeleteWithID, DBGet } from "./db/db";
-import { UserObj } from "@shared/types/user/UserTypes";
+import { DBCreate, DBDeleteWithID, DBGet, DBGetWithID } from "./db/db";
+import { UserObj } from "@shared/types/user/UserType";
 import { sleep } from "./scripts/tools";
+import { DBObj } from "@shared/types/db/DBTypes";
+import { checkUserObj } from "@shared/types/user/UserCheck";
 
 const app = express();
 app.use(express.json());
@@ -45,7 +50,7 @@ app.post("/Initialize", verifyUser, async (req, res) => {
 
   // create user and bucket otherwise
   const user: UserObj = {
-    email,
+    email: email.toLowerCase(),
     subID: subID,
     username: email + "-user",
   };
@@ -96,7 +101,11 @@ app.post("/Initialize", verifyUser, async (req, res) => {
 
 app.post("/GetDir", verifyUser, async (req, res) => {
   const subID = GetSubIDFromHeaders(req); // Assuming `verifyUser` middleware adds `user id` to `req.body`
-  const { path, user, continuationToken } = req.body;
+  const { path, continuationToken, bucket } = req.body;
+
+  if (!bucket || typeof bucket != "string") {
+    return res.status(400).json({ error: "Bucket is required" });
+  }
 
   if (path == undefined) {
     return res.status(400).json({ error: "Path is required" });
@@ -104,65 +113,77 @@ app.post("/GetDir", verifyUser, async (req, res) => {
 
   // console.warn("No bucket permission check yet");
 
-  let bucketOwnerID = user;
   const userObjs = await DBGet("user", [["subID", "==", subID]]);
   if (!userObjs || userObjs.length == 0) {
     return res.status(400).json({ error: "Your account does not exist" });
   }
   const requestingUserID = userObjs[0].id;
 
-  if (!bucketOwnerID) {
-    // no passed bucketOwnerID, thus they are requesting their own contents
-    bucketOwnerID = userObjs[0].id;
-  }
-
-  const bucketName = getBucketIDFromUserID(bucketOwnerID); // if user not passed, then request dir from user's bucket
-  
   const permissionResponse = await checkUserPermissions({
     userID: requestingUserID,
-    bucketName,
-    path: path
+    bucketName: bucket,
+    path: path,
+    file: null,
   });
+
   if (!permissionResponse) {
-    return res.status(400).json({ error: "You do not have permissions to do that" });
+    return res
+      .status(400)
+      .json({ error: "You do not have permissions to do that" });
   }
 
   // console.log('getting', bucketName);
   const dirRes = await getDir({
-    bucket: bucketName,
+    bucket: bucket,
     path: path,
     continuationToken: continuationToken,
   });
+
   console.log("GetDir", dirRes);
   res.send(dirRes);
 });
 
 app.post("/GetUploadLink", verifyUser, async (req, res) => {
   const subID = GetSubIDFromHeaders(req);
-  const { path, user, contentType } = req.body;
+  const { path, file, bucket, contentType } = req.body;
 
   console.warn("No perm check for DL");
 
-  if (!contentType || !path) {
-    return res.status(400).json({ error: "Path and contentType are required" });
+  if (!contentType || !path || !file) {
+    return res
+      .status(400)
+      .json({ error: "Path, contentType, and file are required" });
   }
 
-  let userID = user;
-  if (!userID) {
-    // no passed userID, thus they are requesting their own contents
-    const userObjs = await DBGet("user", [["subID", "==", subID]]);
-    if (!userObjs || userObjs.length == 0) {
-      return res.status(400).json({ error: "Your account does not exist" });
-    }
-    userID = userObjs[0].id;
+  if (!bucket || typeof bucket != "string") {
+    return res.status(400).json({ error: "No bucket found" });
   }
 
-  const bucketName = getBucketIDFromUserID(userID);
+  const userObjs = await DBGet("user", [["subID", "==", subID]]);
+  if (!userObjs || userObjs.length == 0) {
+    return res.status(400).json({ error: "Your account does not exist" });
+  }
+  const requestingUserID = userObjs[0].id;
+
+  // user must have access to this directory to upload a file
+  const permissionResponse = await checkUserPermissions({
+    userID: requestingUserID,
+    bucketName: bucket,
+    path: path,
+    file: null,
+  });
+
+  if (!permissionResponse) {
+    return res
+      .status(400)
+      .json({ error: "You do not have permissions to do that" });
+  }
 
   // console.log('getting', bucketName);
   const uploadRes = await genSignedUploadURL({
-    bucket: bucketName,
-    key: path,
+    bucket: bucket,
+    path: path,
+    file: file,
     contentType: contentType,
   });
   res.send({ url: uploadRes });
@@ -170,118 +191,127 @@ app.post("/GetUploadLink", verifyUser, async (req, res) => {
 
 app.post("/GetDownloadLink", verifyUser, async (req, res) => {
   const subID = GetSubIDFromHeaders(req);
-  const { path, user } = req.body;
+  const { path, bucket, file } = req.body;
 
-  console.warn("No perm check for DL");
+  // console.warn("No perm check for DL");
 
-  let userID = user;
-  if (!userID) {
-    // no passed userID, thus they are requesting their own contents
-    const userObjs = await DBGet("user", [["subID", "==", subID]]);
-    if (!userObjs || userObjs.length == 0) {
-      return res.status(400).json({ error: "Your account does not exist" });
-    }
-    userID = userObjs[0].id;
+  if (!bucket || typeof bucket != "string") {
+    return res.status(400).json({ error: "No bucket found" });
   }
 
-  const bucketName = getBucketIDFromUserID(userID);
+  if (!path || !file) {
+    return res.status(400).json({ error: "Path and file are required" });
+  }
+
+  const userObjs = await DBGet("user", [["subID", "==", subID]]);
+  if (!userObjs || userObjs.length == 0) {
+    return res.status(400).json({ error: "Your account does not exist" });
+  }
+  const requestingUserID = userObjs[0].id;
+
+  // user must have access to this directory to upload a file
+  const permissionResponse = await checkUserPermissions({
+    userID: requestingUserID,
+    bucketName: bucket,
+    path: path,
+    file: file,
+  });
+
+  if (!permissionResponse) {
+    return res
+      .status(400)
+      .json({ error: "You do not have permissions to do that" });
+  }
 
   // console.log('getting', bucketName);
   const downloadRes = await genSignedDownloadURL({
-    bucket: bucketName,
-    key: path,
+    bucket: bucket,
+    path: path,
+    file: file,
   });
+
   res.send({ url: downloadRes });
 });
 
 app.post("/CreateFolder", verifyUser, async (req, res) => {
   const subID = GetSubIDFromHeaders(req);
-  const { path, folderName, user } = req.body;
+  const { path, folderName, bucket } = req.body;
 
-  console.warn("No perm check");
-
-  let userID = user;
-  if (!userID) {
-    // no passed userID, thus they are requesting their own contents
-    const userObjs = await DBGet("user", [["subID", "==", subID]]);
-    if (!userObjs || userObjs.length == 0) {
-      return res.status(400).json({ error: "Your account does not exist" });
-    }
-    userID = userObjs[0].id;
+  if (!bucket || typeof bucket != "string") {
+    return res.status(400).json({ error: "No bucket found" });
   }
 
-  const bucketName = getBucketIDFromUserID(userID);
+  const userObjs = await DBGet("user", [["subID", "==", subID]]);
+  if (!userObjs || userObjs.length == 0) {
+    return res.status(400).json({ error: "Your account does not exist" });
+  }
+  const requestingUserID = userObjs[0].id;
+
+  // user must have access to this directory to upload a file
+  const permissionResponse = await checkUserPermissions({
+    userID: requestingUserID,
+    bucketName: bucket,
+    path: path,
+    file: null,
+  });
+
+  if (!permissionResponse) {
+    return res
+      .status(400)
+      .json({ error: "You do not have permissions to do that" });
+  }
 
   // console.log('getting', bucketName);
   try {
-    console.log('creating folder', path, folderName);
-    const folderRes = await createFolder({
-      bucket: bucketName,
+    console.log("creating folder", path, folderName);
+    await createFolder({
+      bucket: bucket,
       path: path,
       folderName: folderName,
     });
-    console.log('created folder', path, folderName);
+    console.log("created folder", path, folderName);
     res.send({});
   } catch (e) {
-    console.log('error', (e as Error).message);
+    console.log("error", (e as Error).message);
     res.status(403).send({
       error: (e as Error).message,
     });
   }
 });
 
-app.post("/GetDir", verifyUser, async (req, res) => {
-  const subID = GetSubIDFromHeaders(req); // Assuming `verifyUser` middleware adds `user id` to `req.body`
-  const { path, user, continuationToken } = req.body;
-
-  if (path == undefined) {
-    return res.status(400).json({ error: "Path is required" });
-  }
-
-  console.warn("No bucket permission check yet");
-
-  let userID = user;
-  if (!userID) {
-    // no passed userID, thus they are requesting their own contents
-    const userObjs = await DBGet("user", [["subID", "==", subID]]);
-    if (!userObjs || userObjs.length == 0) {
-      return res.status(400).json({ error: "Your account does not exist" });
-    }
-    userID = userObjs[0].id;
-  }
-
-  const bucketName = getBucketIDFromUserID(userID); // if user not passed, then request dir from user's bucket
-  // console.log('getting', bucketName);
-  const dirRes = await getDir({
-    bucket: bucketName,
-    path: path,
-    continuationToken: continuationToken,
-  });
-  res.send(dirRes);
-});
-
 app.post("/DeleteFile", verifyUser, async (req, res) => {
   const subID = GetSubIDFromHeaders(req);
-  const { path, user } = req.body;
+  const { path, file, bucket } = req.body;
 
-  console.warn("No perm check");
-
-  let userID = user;
-  if (!userID) {
-    // no passed userID, thus they are requesting their own contents
-    const userObjs = await DBGet("user", [["subID", "==", subID]]);
-    if (!userObjs || userObjs.length == 0) {
-      return res.status(400).json({ error: "Your account does not exist" });
-    }
-    userID = userObjs[0].id;
+  if (!bucket || typeof bucket != "string") {
+    return res.status(400).json({ error: "No bucket found" });
   }
 
-  const bucketName = getBucketIDFromUserID(userID);
+  const userObjs = await DBGet("user", [["subID", "==", subID]]);
+  if (!userObjs || userObjs.length == 0) {
+    return res.status(400).json({ error: "Your account does not exist" });
+  }
+  const requestingUserID = userObjs[0].id;
+
+  // user must have access to this directory to upload a file
+  const permissionResponse = await checkUserPermissions({
+    userID: requestingUserID,
+    bucketName: bucket,
+    path: path,
+    file: file,
+  });
+
+  if (!permissionResponse) {
+    return res
+      .status(400)
+      .json({ error: "You do not have permissions to do that" });
+  }
 
   // console.log('getting', bucketName);
   const deleteRes = await deleteFile({
-    bucket: bucketName,
-    key: path,
+    bucket: bucket,
+    path: path,
+    file: file,
   });
   if (!deleteRes) {
     return res.send({ error: "Failed to delete file" });
@@ -291,55 +321,241 @@ app.post("/DeleteFile", verifyUser, async (req, res) => {
 
 app.post("/DeleteFolder", verifyUser, async (req, res) => {
   const subID = GetSubIDFromHeaders(req);
-  const { path, user } = req.body;
+  const { path, bucket } = req.body;
 
-  console.warn("No perm check delete folder");
-
-  let userID = user;
-  if (!userID) {
-    // no passed userID, thus they are requesting their own contents
-    const userObjs = await DBGet("user", [["subID", "==", subID]]);
-    if (!userObjs || userObjs.length == 0) {
-      return res.status(400).json({ error: "Your account does not exist" });
-    }
-    userID = userObjs[0].id;
+  if (!bucket || typeof bucket != "string") {
+    return res.status(400).json({ error: "No bucket found" });
   }
 
-  const bucketName = getBucketIDFromUserID(userID);
+  const userObjs = await DBGet("user", [["subID", "==", subID]]);
+  if (!userObjs || userObjs.length == 0) {
+    return res.status(400).json({ error: "Your account does not exist" });
+  }
+  const requestingUserID = userObjs[0].id;
+
+  // user must have access to this directory to upload a file
+  const permissionResponse = await checkUserPermissions({
+    userID: requestingUserID,
+    bucketName: bucket,
+    path: path,
+    file: null,
+  });
+
+  if (!permissionResponse) {
+    return res
+      .status(400)
+      .json({ error: "You do not have permissions to do that" });
+  }
 
   // console.log('getting', bucketName);
   const deleteRes = await deleteDir({
-    bucket: bucketName,
+    bucket: bucket,
     path: path,
   });
+
   if (!deleteRes) {
     return res.send({ error: "Failed to delete folder" });
   }
   res.send({});
 });
 
-// app.post('/Share', verifyUser, async (req, res) => {
-//   const subID = req.user.id;
-//   const { fileName, permissions } = req.body;
+app.post("/Share", verifyUser, async (req, res) => {
+  const subID = GetSubIDFromHeaders(req);
+  const { path, userIDs, emails, file, operation } = req.body;
 
-//   if (!fileName || !permissions) {
-//     return res.status(400).json({ error: 'File name and permissions are required' });
+  if (!path) {
+    return res.status(400).json({ error: "Path parameter missing" });
+  } else if ((!userIDs || !Array.isArray(userIDs)) && (!emails || !Array.isArray(emails))) {
+    return res
+      .status(400)
+      .json({ error: "userIDs or emails parameter must be a non-empty array" });
+  }
+
+  if (operation !== "add" && operation !== "remove") {
+    return res.status(400).json({ error: "operation must be add or remove" });
+  }
+
+  const ownerUserObj = await DBGet("user", [["subID", "==", subID]]);
+  if (ownerUserObj.length === 0) {
+    return res.status(400).json({ error: "Owner does not exist" });
+  }
+  const bucketName = getBucketIDFromUserID(ownerUserObj[0].id);
+
+  const targetUserIDs: string[] = [];
+
+  
+  // TODO: make this operation more efficient.
+
+  // Process userIDs
+  if (userIDs && Array.isArray(userIDs)) {
+    for (const userID of userIDs) {
+      const getRes = await DBGetWithID("user", userID);
+      if (getRes) {
+        targetUserIDs.push(userID);
+      } else {
+        console.warn(`User with ID ${userID} not found`);
+      }
+    }
+  }
+
+  // Process emails
+  if (emails && Array.isArray(emails)) {
+    for (const email of emails) {
+      const getRes = await DBGet("user", [["email", "==", email.toLowerCase()]]);
+      if (getRes && getRes.length > 0) {
+        targetUserIDs.push(getRes[0].id);
+      } else {
+        console.warn(`User with email ${email} not found`);
+      }
+    }
+  }
+
+  if (targetUserIDs.length === 0) {
+    return res.status(400).json({ error: "No valid users found to share with" });
+  }
+
+  let operationResult;
+  if (operation === "add") {
+    operationResult = await addUserPermissions({
+      bucketName: bucketName,
+      userIDs: targetUserIDs,
+      path: path,
+      file: file,
+    });
+  } else if (operation === "remove") {
+    // Assuming there's a removeUserPermissions function
+    operationResult = await removeUserPermissions({
+      bucketName: bucketName,
+      userIDs: targetUserIDs,
+      path: path,
+      file: file,
+    });
+  }
+
+  if (!operationResult) {
+    return res.status(400).json({ error: `Failed to ${operation} users` });
+  }
+
+  res.send({
+    userIDs: targetUserIDs,
+  });
+});
+
+app.post("/getUsersInfo", verifyUser, async (req, res) => {
+  let { userIDs } = req.body;
+
+  const userObjs: { [key: string]: UserObj | undefined } = {};
+  if (userIDs && (!Array.isArray(userIDs) || userIDs.length === 0)) {
+    return res.status(400).json({ error: "userIDs must be a non-empty array" });
+  } else if (!userIDs) {
+    const subID = GetSubIDFromHeaders(req);
+    const userRecords = await DBGet("user", [["subID", "==", subID]]);
+    if (!userRecords || userRecords.length === 0) {
+      return res.status(400).json({ error: "Your account does not exist" });
+    }
+    const userObj = userRecords[0];
+    checkUserObj(userObj);
+    userObjs[userObj.id] = userObj;
+    return res.send(userObjs);
+  }
+
+
+  for (const userID of userIDs) {
+    try {
+      const userObj = (await DBGetWithID("user", userID)) as UserObj | undefined;
+      if (userObj) {
+        checkUserObj(userObj);
+        userObjs[userID] = userObj;
+      } else {
+        console.warn(`User with ID ${userID} not found`);
+        userObjs[userID] = undefined;
+      }
+    } catch (error) {
+      console.warn(`Error fetching user with ID ${userID}:`, (error as Error).message);
+      userObjs[userID] = undefined;
+    }
+  }
+
+  res.send(userObjs);
+});
+
+app.post("/GetDirShareData", verifyUser, async (req, res) => {
+  const subID = GetSubIDFromHeaders(req);
+  const { bucket, path } = req.body;
+
+  if (!bucket || path == undefined) {
+    return res.status(400).json({ error: "Bucket and path are required" });
+  }
+
+  const userObjs = await DBGet("user", [["subID", "==", subID]]);
+  if (!userObjs || userObjs.length === 0) {
+    return res.status(400).json({ error: "Your account does not exist" });
+  }
+
+  const userID = userObjs[0].id;
+  const userBucketID = getBucketIDFromUserID(userID);
+
+  if (bucket !== userBucketID) {
+    return res
+      .status(403)
+      .json({ error: "Not authorized to access this bucket" });
+  }
+
+  try {
+    const shareData = await getDirOrFilePermissions({
+      bucketName: bucket,
+      path,
+      file: null,
+    });
+    if (!shareData || shareData.length === 0) {
+      return res.json([]);
+    }
+    res.json(shareData);
+  } catch (error) {
+    console.error(
+      "Error fetching directory share data:",
+      (error as Error).message,
+    );
+    res.status(500).json({ error: "Failed to fetch directory share data" });
+  }
+});
+
+
+// app.post("/GetAllShareDataInBucket", verifyUser, async (req, res) => {
+//   const subID = GetSubIDFromHeaders(req);
+//   const { bucket, path } = req.body;
+
+//   if (!bucket || !path) {
+//     return res.status(400).json({ error: "Bucket and path are required" });
 //   }
 
-//   const bucketName = subID;
+//   const userObjs = await DBGet("user", [["subID", "==", subID]]);
+//   if (!userObjs || userObjs.length === 0) {
+//     return res.status(400).json({ error: "Your account does not exist" });
+//   }
+
+//   const userID = userObjs[0].id;
+//   const userBucketID = getBucketIDFromUserID(userID);
+
+//   if (bucket !== userBucketID) {
+//     return res
+//       .status(403)
+//       .json({ error: "Not authorized to access this bucket" });
+//   }
 
 //   try {
-//     // Update ACL for the file
-//     await s3.putObjectAcl({
-//       Bucket: bucketName,
-//       Key: fileName,
-//       ACL: permissions, // e.g., 'public-read', 'private'
-//     }).promise();
-
-//     res.json({ message: 'File permissions updated successfully' });
+//     // TODO: shareData may be incomplete
+//     const shareData = await DBGet('share', [['bucket', '==', bucket]]);
+//     if (!shareData || shareData.length === 0) {
+//       return res.json({});
+//     }
+//     res.json(shareData);
 //   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ error: 'Failed to update file permissions' });
+//     console.error(
+//       "Error fetching directory share data:",
+//       (error as Error).message,
+//     );
+//     res.status(500).json({ error: "Failed to fetch directory share data" });
 //   }
 // });
 

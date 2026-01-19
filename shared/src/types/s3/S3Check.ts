@@ -92,18 +92,19 @@ export function checkGetDirResponse(obj: any): asserts obj is GetDirResponse {
  *
  * @throws An error if the bucket name is invalid. The error message specifies the reason:
  * - "Invalid bucket name: must be a string." if the input is not a string.
- * - "Invalid bucket name: contains illegal characters." if the bucket name contains characters other than lowercase letters (a-t) or numbers (0-9).
+ * - "Invalid bucket name: contains illegal characters." if the bucket name contains characters other than lowercase letters (a-z, excluding i, o, and u) or digits (0-9).
  *
  * @remarks
- * - The function uses a regular expression (`/^[a-t0-9]+$/`) to validate the bucket name.
- * - This function enforces a stricter subset of S3 bucket naming rules to comply with base32 requirements.
+ * - The function uses a regular expression (`/^[0-9a-hj-np-tv-z]+$/`) to validate the bucket name.
+ * - This function enforces a stricter subset of S3 bucket naming rules to comply with Crockford Base32 requirements.
  */
 export function checkBucketName(obj: string): boolean {
-  const bucketNameRegex = /^[a-t0-9]+$/;
+  const bucketNameRegex = /^[0-9a-hj-np-tv-z]+$/;
   if (typeof obj !== "string") {
     throw new Error("Invalid bucket name: must be a string.");
   }
   if (!bucketNameRegex.test(obj)) {
+    console.log('awdji', obj);
     throw new Error("Invalid bucket name: contains illegal characters.");
   }
   return true;

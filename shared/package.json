@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "crockford-base32": "^2.0.0"
+  }
+}

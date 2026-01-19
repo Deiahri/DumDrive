@@ -5,34 +5,49 @@ import useCustomSearchParams from "@/app/_hooks/useCustomSearchParams";
 import { env_vars } from "@/app/_tools/env_vars";
 import { checkGetDirResponse } from "@shared/types/s3/S3Check";
 import { GetDirResponse } from "@shared/types/s3/S3Types";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { FaFile } from "react-icons/fa";
 import { FaDownload, FaFolder, FaTrash } from "react-icons/fa6";
 import { useAppContext } from "../_context/AppContext";
+import { Share } from "@shared/types/share/ShareType";
+import { checkShare } from "@shared/types/share/ShareCheck";
 
 export default function DirRenderer({
   path,
   user,
+  bucket,
 }: {
   path?: string;
   user?: string;
+  bucket?: string;
 }) {
   const { updateParams } = useCustomSearchParams();
   const AuthedFetch = useAuthedFetch();
-  const { DirData, setDirData, DirDataCache, setDirDataCache } = useAppContext();
+  const {
+    DirData,
+    setDirData,
+    DirDataCache,
+    setDirDataCache,
+    userObj,
+    setDirShareCache,
+    DirShareCache,
+  } = useAppContext();
 
   const handleFolderClick = (folder: string) => {
     updateParams({ p: folder }, false);
   };
 
   const controller = new AbortController();
+
   useEffect(() => {
+    if (!bucket) return;
+    if (!userObj) return;
     const makeFetch = async () => {
       if (DirDataCache[path || ""]) {
         // console.log('set from cache', DirDataCache[path || ""]);
         setDirData(DirDataCache[path || ""]);
       } else {
-        setDirData('loading');
+        setDirData("loading");
       }
       try {
         console.log(`${env_vars.BACKEND_URL}/GetDir`);
@@ -42,6 +57,7 @@ export default function DirRenderer({
             body: JSON.stringify({
               user,
               path: path || "",
+              bucket,
             }),
           })
         ).json();
@@ -53,9 +69,13 @@ export default function DirRenderer({
           return;
         }
         checkGetDirResponse(res);
+
         setDirDataCache({
           ...DirDataCache,
-          [path || ""]: res
+          [bucket]: {
+            ...DirDataCache[bucket],
+            [path || ""]: res,
+          },
         });
         console.log("Dir", res);
         setDirData(res);
@@ -67,18 +87,79 @@ export default function DirRenderer({
     makeFetch();
 
     return () => {
-      controller.abort()
-    }
-  }, [path, user]);
+      controller.abort();
+    };
+  }, [path, user, userObj, bucket]);
+
+  // fetches current dir share data
+  useEffect(() => {
+    if (!bucket) return;
+    const makeFetch = async () => {
+      try {
+        console.log(`${env_vars.BACKEND_URL}/GetDirShareData`);
+        const res = await (
+          await AuthedFetch(`${env_vars.BACKEND_URL}/GetDirShareData`, {
+            method: "POST",
+            body: JSON.stringify({
+              path: path || "",
+              bucket,
+            }),
+          })
+        ).json();
+
+        console.log(res);
+        if (res.error) {
+          console.error(res.error);
+          setDirData("failed");
+          return;
+        }
+
+        const shareArr: Share[] = [];
+        for (const share of res) {
+          try {
+            checkShare(share);
+            shareArr.push(share);
+          } catch {}
+        }
+
+        setDirShareCache({
+          ...DirShareCache,
+          [bucket]: {
+            ...DirShareCache[bucket],
+            [path || ""]: shareArr,
+          },
+        });
+      } catch (e) {
+        console.error((e as Error).message);
+        setDirData("failed");
+      }
+    };
+    makeFetch();
+
+    return () => {
+      controller.abort();
+    };
+  }, [path, user, bucket]);
 
   const handleDownload = async (key: string, fileName: string) => {
     try {
+      const keySplit = key.split("/");
+      keySplit.pop();
+      keySplit.pop(); // pop last two items (empty string and file name)
+
+      let pathStr = "";
+      for (const currentKey of keySplit) {
+        pathStr += currentKey + "/";
+      }
+
       const res = await (
         await AuthedFetch(`${env_vars.BACKEND_URL}/GetDownloadLink`, {
           method: "POST",
           body: JSON.stringify({
-            path: key,
+            path: pathStr,
+            file: fileName,
             user: user,
+            bucket,
           }),
         })
       ).json();
@@ -109,28 +190,45 @@ export default function DirRenderer({
       try {
         const newDirData = { ...(DirData as GetDirResponse) };
         // set file to loading
-        newDirData.files = newDirData.files.map((file) => file.name == key ? { ...file, isLoading: true } : file)
+        newDirData.files = newDirData.files.map((file) =>
+          file.name == key ? { ...file, isLoading: true } : file,
+        );
         setDirData(newDirData);
-        
+
+        const keySplit = key.split("/");
+        keySplit.pop();
+        keySplit.pop(); // pop last two items (empty string and file name)
+
+        let pathStr = "";
+        for (const currentKey of keySplit) {
+          pathStr += currentKey + "/";
+        }
+
         const res = await AuthedFetch(`${env_vars.BACKEND_URL}/DeleteFile`, {
           method: "POST",
           body: JSON.stringify({
-            path: key,
+            path: pathStr,
+            file: fileName,
             user: user,
+            bucket,
           }),
         });
-        
-        console.log('done loading');
+
+        console.log("done loading");
         const result = await res.json();
         if (result.error) {
           alert(`Failed to delete ${fileName}: ${result.error}`);
-          newDirData.files = newDirData.files.map((file) => file.name == key ? { ...file, isLoading: false } : file)
+          newDirData.files = newDirData.files.map((file) =>
+            file.name == key ? { ...file, isLoading: false } : file,
+          );
           setDirData(newDirData);
         } else {
           // alert(`${fileName} has been deleted successfully.`);
           // Optionally refresh the directory data
           const newerDirData = { ...newDirData };
-          newerDirData.files = newerDirData.files.filter((file) => file.name != key);
+          newerDirData.files = newerDirData.files.filter(
+            (file) => file.name != key,
+          );
           setDirData(newerDirData);
         }
       } catch (error) {
@@ -143,19 +241,24 @@ export default function DirRenderer({
   const handleFolderDelete = async (key: string, folderName: string) => {
     if (confirm(`Are you sure you want to delete folder \"${folderName}\"?`)) {
       try {
-        const premptiveDirData: GetDirResponse = { ...(DirData as GetDirResponse) };
-        console.log('dajjwd', premptiveDirData.files[0]);
-        premptiveDirData.files = premptiveDirData.files.map((file) => file.name == key ? { ...file, isLoading: true }: file);
+        const premptiveDirData: GetDirResponse = {
+          ...(DirData as GetDirResponse),
+        };
+        console.log("dajjwd", premptiveDirData.files[0]);
+        premptiveDirData.files = premptiveDirData.files.map((file) =>
+          file.name == key ? { ...file, isLoading: true } : file,
+        );
         setDirData(premptiveDirData);
-        console.log('set');
+        console.log("set");
         const res = await AuthedFetch(`${env_vars.BACKEND_URL}/DeleteFolder`, {
           method: "POST",
           body: JSON.stringify({
             path: key,
             user: user,
+            bucket,
           }),
         });
-        console.log('done');
+        console.log("done");
 
         const result = await res.json();
         if (result.error) {
@@ -176,8 +279,9 @@ export default function DirRenderer({
     }
   };
 
-  if (DirData == "failed" || DirData == "loading") return null;
+  if (DirData == "failed" || DirData == "loading" || !DirData) return null;
 
+  console.log('isEM', DirData);
   const isEmpty =
     (DirData.files.length == 0 ||
       (DirData.files.length == 1 && DirData.files[0].name == path)) &&
@@ -252,19 +356,19 @@ function Folder({
   name,
   onClick,
   onDelete,
-  isLoading
+  isLoading,
 }: {
   name: string;
   onClick: () => void;
   onDelete: () => void;
-  isLoading?: boolean
+  isLoading?: boolean;
 }) {
   return (
     <div
       // onClick={onClick}
       style={{
         opacity: !isLoading ? 1 : 0.5,
-        pointerEvents: !isLoading ? 'initial' : 'none',
+        pointerEvents: !isLoading ? "initial" : "none",
         width: "100%",
         height: "100%",
         borderRadius: "0.5rem",
@@ -287,7 +391,7 @@ function Folder({
           fontSize: "1rem",
           fontWeight: "500",
           width: "100%",
-          cursor: "pointer"
+          cursor: "pointer",
         }}
       >
         {name}
@@ -326,7 +430,7 @@ function File({
       onClick={onClick}
       style={{
         opacity: !isLoading ? 1 : 0.5,
-        pointerEvents: !isLoading ? 'initial' : 'none',
+        pointerEvents: !isLoading ? "initial" : "none",
         width: "100%",
         height: "100%",
         borderRadius: "0.5rem",
